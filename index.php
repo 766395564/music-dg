@@ -1,6 +1,6 @@
 <?php
 // 文件名：index.php
-// 版本：V5.0 (直连网易云官方版 - 解决IP被聚合源拉黑问题)
+// 版本：V6.0 (咪咕音乐专版 - 专治IP封禁和版权缺歌)
 
 error_reporting(0);
 header('Content-Type: application/json; charset=utf-8');
@@ -13,66 +13,64 @@ if (empty($word)) {
     exit;
 }
 
-// 2. 定义请求网易云官方的函数
-function wy_search($keyword) {
-    // 网易云官方搜索接口 (Legacy)
-    $url = "http://music.163.com/api/search/get/web?csrf_token=";
-    $post_data = "s=" . urlencode($keyword) . "&type=1&offset=0&total=true&limit=5";
+// 2. 请求咪咕音乐接口 (该接口对云服务器IP非常友好)
+function migu_search($keyword) {
+    // 咪咕官方搜索 API
+    $url = "https://m.music.migu.cn/migu/remoting/scr_search_tag?rows=10&type=2&keyword=" . urlencode($keyword) . "&pgc=1";
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $post_data);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    // 伪装成手机端访问
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1');
+    // 必须添加 Referer
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Referer: https://m.music.migu.cn/']);
     
-    // 关键：伪装 Referer，让网易云以为我们是网页版
-    $headers = [
-        'Referer: https://music.163.com/',
-        'Cookie: appver=2.0.2',
-        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    ];
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    
-    $output = curl_exec($ch);
+    $data = curl_exec($ch);
     curl_close($ch);
-    return json_decode($output, true);
+    return json_decode($data, true);
 }
 
 // 3. 执行搜索
-$wy_data = wy_search($word);
+$migu_data = migu_search($word);
 
-// 4. 解析数据并转换格式
-if ($wy_data && isset($wy_data['result']['songs'][0])) {
-    $song = $wy_data['result']['songs'][0]; // 取第一首
+// 4. 解析结果
+if ($migu_data && isset($migu_data['musics'][0])) {
+    $song = $migu_data['musics'][0]; // 取第一首
     
-    // 组装播放链接 (网易云外链公式)
-    $music_id = $song['id'];
-    $music_url = "http://music.163.com/song/media/outer/url?id=$music_id.mp3";
+    // 提取字段 (咪咕的字段结构)
+    $title = $song['songName'] ?? "未知歌名";
+    $singer = $song['singerName'] ?? "未知歌手";
+    $cover = $song['cover'] ?? ""; // 咪咕封面
+    $lyric_url = $song['lyrics'] ?? ""; // 歌词链接
     
-    // 组装封面 (如果有)
-    $cover = $song['album']['picUrl'] ?? "";
-    if(strpos($cover, 'http') === 0) {
-        $cover = str_replace("http://", "https://", $cover); // 强转 https
+    // 关键：获取播放链接 (优先高品质)
+    $music_url = $song['mp3'] ?? ""; 
+
+    // 再次确认：如果是 http 开头，强转 https (防止 App 报错)
+    if (strpos($music_url, 'http://') === 0) {
+        $music_url = str_replace('http://', 'https://', $music_url);
     }
-
-    // 组装歌手
-    $singer = $song['artists'][0]['name'] ?? "未知歌手";
+    if (strpos($cover, 'http://') === 0) {
+        $cover = str_replace('http://', 'https://', $cover);
+    }
 
     $output = [
         "code"      => 200,
-        "title"     => $song['name'],
+        "title"     => $title,
         "singer"    => $singer,
         "cover"     => $cover,
         "music_url" => $music_url,
-        "lyric"     => "[00:00.00]本接口为极速版，暂不解析歌词" // 搜索接口不带歌词，保证速度
+        "lyric"     => $lyric_url
     ];
 } else {
     // 失败处理
     $output = [
         "code" => 404, 
-        "msg" => "未找到歌曲 (网易云官方无结果)",
-        "debug" => isset($wy_data['code']) ? $wy_data['code'] : "无响应"
+        "msg" => "未找到歌曲 (请确认歌名)",
+        "debug_raw" => "咪咕接口返回空，可能是歌名太偏或暂时无结果"
     ];
 }
 

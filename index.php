@@ -1,9 +1,9 @@
 <?php
 // 文件名：index.php
-// 版本：V26.0 (韩小韩单源版)
-// 核心：只用一个最稳的源 (vvhan)，并严格伪装成 hbmusic 格式
+// 版本：V27.0 (文档严格适配 + 唯一可用源)
+// 核心：舍弃 Liuzhijin(已挂)，使用 hb.ley.wang，并严格匹配文档格式
 
-// 1. 强力清洗 (确保 App 不报错)
+// 1. 强力清洗 (防止空格/BOM头导致 App 解析失败)
 ob_start();
 ob_clean();
 
@@ -12,9 +12,10 @@ header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 
 // 2. 获取参数
+// 文档要求支持 name，同时兼容 word
 $name = $_GET['name'] ?? $_GET['word'] ?? $_GET['keyword'] ?? '';
 
-// 3. 定义输出函数
+// 3. 定义标准输出函数
 function send_json($data) {
     ob_clean(); 
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -23,18 +24,26 @@ function send_json($data) {
 
 // 4. 空值检查
 if (empty($name)) {
-    send_json(["code" => 400, "msg" => "请在链接后输入歌名"]);
+    send_json([
+        "code" => 400,
+        "msg" => "歌名不能为空",
+        "title" => "",
+        "singer" => "",
+        "cover" => "",
+        "link" => "",
+        "music_url" => ""
+    ]);
 }
 
-// 5. 【核心源】使用韩小韩 (vvhan) 公益 API
-// 这是一个长期稳定的源，通常不会屏蔽海外 IP
-$targetUrl = "https://api.vvhan.com/api/music?type=search&txt=" . urlencode($name);
+// 5. 【关键】使用唯一在 Zeabur 上验证成功的源 (hb.ley.wang)
+// Liuzhijin 已确认屏蔽 Zeabur，绝对不能再用了
+$targetUrl = "https://hb.ley.wang/qq.php?word=" . urlencode($name);
 
 $ch = curl_init();
 curl_setopt($ch, CURLOPT_URL, $targetUrl);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+curl_setopt($ch, CURLOPT_TIMEOUT, 15);
 // 伪装成浏览器
 curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36');
 $response = curl_exec($ch);
@@ -43,41 +52,35 @@ curl_close($ch);
 // 6. 解析数据
 $data = json_decode($response, true);
 
-// 7. 【关键步骤】格式整容
-// 韩小韩返回的是 success:true, 我们要把它改成你软件要的 code:200
-if ($data && isset($data['success']) && $data['success'] == true) {
-    $info = $data['info'];
+// 7. 【格式重组】严格对照你的文档截图
+if ($data && !empty($data['music_url'])) {
     
-    // 提取并清洗字段
-    $song_title = $info['name'] ?? "未知歌曲";
-    $song_singer = $info['auther'] ?? $info['author'] ?? "未知歌手"; // 兼容它的拼写
-    $song_cover = $info['img'] ?? "";
-    $song_url = $info['mp3url'] ?? $info['url'] ?? "";
-
-    // 强制 https
-    $final_url = str_replace('http://', 'https://', $song_url);
-    $final_cover = str_replace('http://', 'https://', $song_cover);
+    // 强制 HTTPS (App 现在的硬性要求)
+    $final_url = str_replace('http://', 'https://', $data['music_url']);
+    $final_cover = str_replace('http://', 'https://', $data['cover']);
     
-    // 构造最终数组 (完全符合 hbmusic 格式)
+    // 构造最终数组
     $output = [
-        "code"      => 200,
-        "title"     => (string)$song_title,
-        "singer"    => (string)$song_singer,
+        "code"      => 200,                // 文档要求: code为200
+        "title"     => (string)$data['title'],
+        "singer"    => (string)$data['singer'],
         "cover"     => (string)$final_cover,
-        // 伪装关键：补全 link 字段
+        // 文档文字描述提到了 link，我们这里填入播放链接或封面链接，确保不缺字段
         "link"      => (string)$final_url, 
-        "music_url" => (string)$final_url,
-        "lyric"     => "[00:00.00]此源暂无歌词"
+        "music_url" => (string)$final_url, // 文档要求: music_url
+        "lyric"     => "[00:00.00]备用源暂无歌词"
     ];
 
     send_json($output);
 
 } else {
-    // 失败处理
+    // 失败处理 (严格按照文档格式返回空)
     send_json([
         "code" => 404, 
         "msg" => "未找到歌曲",
         "title" => "无结果",
+        "singer" => "",
+        "cover" => "",
         "link" => "",
         "music_url" => ""
     ]);

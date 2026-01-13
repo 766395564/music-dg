@@ -1,7 +1,7 @@
 <?php
 // 文件名：index.php
-// 版本：V10.0 (终极合体版 - 伪造大陆IP + 咪咕正版曲库)
-// 目的：在印尼服务器上，骗过咪咕音乐，拿到周杰伦原唱
+// 版本：V12.0 (移花接木版)
+// 核心逻辑：结合 V9 的成功网络伪装 + 酷我的周杰伦曲库
 
 error_reporting(0);
 header('Content-Type: application/json; charset=utf-8');
@@ -13,23 +13,22 @@ if (empty($word)) {
     exit;
 }
 
-// 1. 生成随机中国大陆 IP (欺诈核心)
-function get_random_china_ip() {
-    $prefixes = ['116.25', '116.76', '113.65', '119.123', '14.23', '14.116', '211.136'];
+// 1. 核心科技：生成中国大陆 IP (这是之前 V9 成功的关键)
+function get_fake_ip() {
+    $prefixes = ['116.25', '116.76', '113.65', '119.123', '14.23', '211.136'];
     $prefix = $prefixes[array_rand($prefixes)];
-    $suffix = rand(1, 254) . '.' . rand(1, 254);
-    return $prefix . '.' . $suffix;
+    return $prefix . '.' . rand(1, 254) . '.' . rand(1, 254);
 }
 
-// 2. 请求咪咕接口 (带上伪造的身份证)
-function request_migu($keyword) {
-    $fake_ip = get_random_china_ip();
-    $url = "https://m.music.migu.cn/migu/remoting/scr_search_tag?rows=10&type=2&keyword=" . urlencode($keyword) . "&pgc=1";
-
+// 2. 酷我请求函数 (带全套伪装)
+function kuwo_request($url) {
+    $fake_ip = get_fake_ip();
     $headers = [
-        'Referer: https://m.music.migu.cn/',
-        'User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
-        // === 关键：告诉咪咕我在国内 ===
+        'Referer: http://www.kuwo.cn/',
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+        'Cookie: kw_token=HY520',
+        'csrf: HY520',
+        // === 关键：把 Zeabur 的印尼 IP 伪装成国内 IP ===
         'X-Real-IP: ' . $fake_ip,
         'X-Forwarded-For: ' . $fake_ip,
         'Client-IP: ' . $fake_ip
@@ -39,51 +38,57 @@ function request_migu($keyword) {
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    
-    $output = curl_exec($ch);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $data = curl_exec($ch);
     curl_close($ch);
-    return json_decode($output, true);
+    return json_decode($data, true);
 }
 
-// 3. 执行搜索
-$migu_data = request_migu($word);
+// 3. 第一步：搜索歌曲 (获取 RID)
+$searchUrl = "http://www.kuwo.cn/api/www/search/searchMusicBykeyWord?key=" . urlencode($word) . "&pn=1&rn=1&httpsStatus=1";
+$searchData = kuwo_request($searchUrl);
 
-// 4. 解析结果
-if ($migu_data && isset($migu_data['musics'][0])) {
-    $song = $migu_data['musics'][0]; // 取第一首
+if ($searchData && isset($searchData['data']['list'][0])) {
+    $song = $searchData['data']['list'][0];
+    $rid = $song['rid'];
+    $title = $song['name'];
+    $singer = $song['artist'];
+    $cover = $song['pic'] ?? "";
     
-    // 咪咕的字段
-    $title = $song['songName'];
-    $singer = $song['singerName'];
-    $cover = $song['cover'] ?? "";
-    $music_url = $song['mp3'] ?? ""; // 咪咕直接给mp3链接
-    $lyric = $song['lyrics'] ?? "";
+    // 4. 第二步：获取播放链接
+    $playUrlApi = "http://www.kuwo.cn/api/v1/www/music/playUrl?mid={$rid}&type=music&httpsStatus=1";
+    $playData = kuwo_request($playUrlApi);
 
-    // 协议修复 (http -> https)
-    if (strpos($music_url, 'http://') === 0) {
-        $music_url = str_replace('http://', 'https://', $music_url);
+    if ($playData && !empty($playData['data']['url'])) {
+        $music_url = $playData['data']['url'];
+        
+        // 确保 https (App通常强制要求)
+        $music_url = str_replace("http://", "https://", $music_url);
+        $cover = str_replace("http://", "https://", $cover);
+
+        // 成功输出
+        echo json_encode([
+            "code"      => 200,
+            "title"     => $title,
+            "singer"    => $singer, // 这里应该是“周杰伦”
+            "cover"     => $cover,
+            "music_url" => $music_url,
+            "lyric"     => "[00:00.00]酷我源暂不解析歌词"
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } else {
+        // 搜到了但没链接（可能是付费歌）
+        echo json_encode([
+            "code" => 404, 
+            "msg" => "找到歌曲但无法播放 (可能是VIP付费歌曲)", 
+            "debug_raw" => "KUWO_PLAY_FAIL"
+        ]);
     }
-    if (strpos($cover, 'http://') === 0) {
-        $cover = str_replace('http://', 'https://', $cover);
-    }
-
-    echo json_encode([
-        "code"      => 200,
-        "title"     => $title,
-        "singer"    => $singer,
-        "cover"     => $cover,
-        "music_url" => $music_url,
-        "lyric"     => $lyric
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
 } else {
-    // 失败
+    // 连搜都搜不到
     echo json_encode([
         "code" => 404, 
-        "msg" => "未找到歌曲 (伪装IP成功，但咪咕搜索无结果)",
-        "debug_raw" => "MIGU_EMPTY"
+        "msg" => "未找到歌曲 (酷我接口连接失败)", 
+        "debug_raw" => "KUWO_SEARCH_FAIL"
     ]);
 }
 ?>

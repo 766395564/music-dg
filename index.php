@@ -1,71 +1,39 @@
 <?php
 // 文件名：index.php
-// 版本：V16.0 (格式强力清洗版)
-// 专治：浏览器能看但App报错的问题（去除隐形空格/BOM头）
+// 版本：V18.0 (完美透传版)
+// 逻辑：直接克隆 hbmusic.1yo.cc 的返回结果，确保格式一模一样
 
-// 1. 开启缓冲区 (这是清洗的关键)
+// 1. 强力清洗 (防止任何隐形空格/报错/BOM头破坏JSON)
 ob_start();
 
-// 2. 基础设置
 error_reporting(0);
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 
-// 3. 获取参数
-$word = $_GET['word'] ?? $_GET['keyword'] ?? '';
+// 2. 获取歌名 (兼容各种 App 的传参习惯)
+$word = $_GET['word'] ?? $_GET['keyword'] ?? $_GET['name'] ?? '';
 
-// 4. 定义输出函数 (统一出口，防止杂乱输出)
-function send_json($data) {
-    // === 核心清洗步骤 ===
-    ob_clean(); // 清除之前所有可能的空格、报错、杂质
-    echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit; // 立即结束，防止后面有空行
-}
-
-// 5. 空参数处理
+// 3. 这里的逻辑是：如果没传歌名，就给个提示；传了就去请求新接口
 if (empty($word)) {
-    send_json(["code" => 400, "msg" => "请输入歌名"]);
+    ob_clean(); // 清除杂质
+    echo json_encode(["code" => 400, "msg" => "请提供歌名"]);
+    exit;
 }
 
-// 6. 请求网友接口 (hb.ley.wang)
-$targetUrl = "https://hb.ley.wang/qq.php?word=" . urlencode($word);
+// 4. 目标接口 (你新找到的那个好用的)
+// 注意：它是 ?name=xxx，你的 App 可能是 ?word=xxx，这里自动对应上了
+$targetUrl = "https://hbmusic.1yo.cc/?name=" . urlencode($word);
 
+// 5. 模拟浏览器请求 (防止被拦截)
 $ch = curl_init();
 curl_setopt($ch, CURLOPT_URL, $targetUrl);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-curl_setopt($ch, CURLOPT_TIMEOUT, 20); // 延长超时时间到20秒
-curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36');
 $response = curl_exec($ch);
 curl_close($ch);
 
-// 7. 解析数据
-$data = json_decode($response, true);
-
-// 8. 格式适配
-if ($data && !empty($data['music_url'])) {
-    // 强制 https
-    $final_url = str_replace('http://', 'https://', $data['music_url']);
-    $final_cover = str_replace('http://', 'https://', $data['cover']);
-
-    // 构造完全符合文档的纯净结构
-    $output = [
-        "code"      => 200,
-        "title"     => (string)($data['title'] ?? "未知歌名"),
-        "singer"    => (string)($data['singer'] ?? "未知歌手"),
-        "cover"     => (string)$final_cover,
-        "music_url" => (string)$final_url,
-        "lyric"     => "[00:00.00]此源暂无歌词"
-    ];
-    
-    send_json($output);
-
-} else {
-    // 失败处理
-    send_json([
-        "code" => 404, 
-        "msg" => "未找到歌曲",
-        "debug_info" => "Proxy response invalid"
-    ]);
-}
-?>
+// 6. 最终输出 (关键步骤)
+// 我们不解析它，也不修改它，直接原样返回，但会清洗掉两头的空格
+ob_clean(); // 再次清洗，确保 

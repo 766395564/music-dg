@@ -1,6 +1,7 @@
 <?php
 // 文件名：index.php
-// 版本：V9.0 (海外突围版 - 深度伪造中国大陆IP)
+// 版本：V10.0 (终极合体版 - 伪造大陆IP + 咪咕正版曲库)
+// 目的：在印尼服务器上，骗过咪咕音乐，拿到周杰伦原唱
 
 error_reporting(0);
 header('Content-Type: application/json; charset=utf-8');
@@ -12,40 +13,33 @@ if (empty($word)) {
     exit;
 }
 
-// ==========================================
-// 核心技术：生成随机的中国大陆 IP 地址
-// ==========================================
+// 1. 生成随机中国大陆 IP (欺诈核心)
 function get_random_china_ip() {
-    // 这里的网段都是常见的国内家庭宽带网段
-    $prefixes = ['116.25', '116.76', '113.65', '119.123', '14.23', '14.116'];
+    $prefixes = ['116.25', '116.76', '113.65', '119.123', '14.23', '14.116', '211.136'];
     $prefix = $prefixes[array_rand($prefixes)];
     $suffix = rand(1, 254) . '.' . rand(1, 254);
     return $prefix . '.' . $suffix;
 }
 
-// 请求函数 (带全套伪装)
-function request_netease($url, $data = null) {
+// 2. 请求咪咕接口 (带上伪造的身份证)
+function request_migu($keyword) {
     $fake_ip = get_random_china_ip();
-    
+    $url = "https://m.music.migu.cn/migu/remoting/scr_search_tag?rows=10&type=2&keyword=" . urlencode($keyword) . "&pgc=1";
+
     $headers = [
-        'Referer: https://music.163.com/',
-        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-        // === 关键：伪造 IP ===
+        'Referer: https://m.music.migu.cn/',
+        'User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
+        // === 关键：告诉咪咕我在国内 ===
         'X-Real-IP: ' . $fake_ip,
         'X-Forwarded-For: ' . $fake_ip,
-        'Client-IP: ' . $fake_ip,
-        'Cookie: os=pc; appver=2.9.7;' // 伪装成 PC 客户端
+        'Client-IP: ' . $fake_ip
     ];
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    if ($data) {
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-    }
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $output = curl_exec($ch);
@@ -53,47 +47,43 @@ function request_netease($url, $data = null) {
     return json_decode($output, true);
 }
 
-// 1. 调用网易云官方搜索接口
-$searchUrl = "http://music.163.com/api/search/get/web?csrf_token=";
-$postData = "s=" . urlencode($word) . "&type=1&offset=0&total=true&limit=5";
+// 3. 执行搜索
+$migu_data = request_migu($word);
 
-$wy_data = request_netease($searchUrl, $postData);
-
-// 2. 解析结果
-if ($wy_data && isset($wy_data['result']['songs'][0])) {
-    $song = $wy_data['result']['songs'][0];
+// 4. 解析结果
+if ($migu_data && isset($migu_data['musics'][0])) {
+    $song = $migu_data['musics'][0]; // 取第一首
     
-    // 3. 获取 ID 拼装链接 (这种方式在海外最稳)
-    $music_id = $song['id'];
-    $music_url = "http://music.163.com/song/media/outer/url?id=$music_id.mp3";
-    
-    $cover = $song['album']['picUrl'] ?? "";
-    $cover = str_replace("http://", "https://", $cover);
+    // 咪咕的字段
+    $title = $song['songName'];
+    $singer = $song['singerName'];
+    $cover = $song['cover'] ?? "";
+    $music_url = $song['mp3'] ?? ""; // 咪咕直接给mp3链接
+    $lyric = $song['lyrics'] ?? "";
 
-    $singer = $song['artists'][0]['name'] ?? "未知歌手";
-
-    echo json_encode([
-        "code"      => 200,
-        "title"     => $song['name'],
-        "singer"    => $singer,
-        "cover"     => $cover,
-        "music_url" => $music_url,
-        "lyric"     => "[00:00.00]海外版暂不解析歌词" 
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-} else {
-    // 失败诊断
-    $debug_msg = "IP伪装失效";
-    if (isset($wy_data['code']) && $wy_data['code'] != 200) {
-        $debug_msg = "网易云拒绝了伪装请求 (Code: " . $wy_data['code'] . ")";
-    } else if (empty($wy_data)) {
-        $debug_msg = "网络请求无返回 (可能是Zeabur出口被封)";
+    // 协议修复 (http -> https)
+    if (strpos($music_url, 'http://') === 0) {
+        $music_url = str_replace('http://', 'https://', $music_url);
+    }
+    if (strpos($cover, 'http://') === 0) {
+        $cover = str_replace('http://', 'https://', $cover);
     }
 
     echo json_encode([
+        "code"      => 200,
+        "title"     => $title,
+        "singer"    => $singer,
+        "cover"     => $cover,
+        "music_url" => $music_url,
+        "lyric"     => $lyric
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+} else {
+    // 失败
+    echo json_encode([
         "code" => 404, 
-        "msg" => "未找到歌曲 (服务器在印尼，已尝试伪装IP但仍可能被拦截)",
-        "debug" => $debug_msg
-    ], JSON_UNESCAPED_UNICODE);
+        "msg" => "未找到歌曲 (伪装IP成功，但咪咕搜索无结果)",
+        "debug_raw" => "MIGU_EMPTY"
+    ]);
 }
 ?>

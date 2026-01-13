@@ -1,7 +1,8 @@
 <?php
 // 文件名：index.php
-// 版本：V28.0 (解决“该账号没有会员”问题)
-// 核心：代码格式保持 V27 的完美状态，但把内核换成“韩小韩 API”，解决 VIP 歌曲无法播放的问题
+// 版本：V30.0 (Meting 酷狗源专版)
+// 核心：使用 Meting 公共接口搜索酷狗音乐 (Kugou)
+// 优势：酷狗源对海外IP友好，且拥有周杰伦版权，格式严格适配 APP
 
 ob_start();
 ob_clean();
@@ -9,77 +10,106 @@ error_reporting(0);
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 
-// 1. 获取参数 (严格适配文档)
+// 1. 获取参数
 $name = $_GET['name'] ?? $_GET['word'] ?? $_GET['keyword'] ?? '';
 
-// 2. 没传歌名直接返回空结构
-if (empty($name)) {
-    echo json_encode([
-        "code" => 400,
-        "msg" => "请提供歌名",
-        "title" => "",
-        "singer" => "",
-        "cover" => "",
-        "link" => "",
-        "music_url" => ""
-    ], JSON_UNESCAPED_UNICODE);
+// 2. 基础输出函数
+function send_json($data) {
+    ob_clean();
+    echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 
-// 3. 【核心更换】使用韩小韩 (vvhan) 搜歌接口
-// 之前的 hb.ley.wang 因为没会员被抛弃了
-$targetUrl = "https://api.vvhan.com/api/music?type=search&txt=" . urlencode($name);
+// 3. 空值检查
+if (empty($name)) {
+    send_json(["code" => 400, "msg" => "请提供歌名"]);
+}
+
+// ==================================================
+// 核心逻辑：调用 Meting API (Meting 是开源界最稳的解析聚合)
+// 我们选择 server=kugou (酷狗)，因为你之前的成功案例就是酷狗源
+// ==================================================
+
+// 第一步：搜索歌曲获取 ID
+// 备用接口：如果 i-meto 挂了，可以换成 api.injahow.com/meting
+$searchApi = "https://api.i-meto.com/meting/api?server=kugou&type=search&keyword=" . urlencode($name);
 
 $ch = curl_init();
-curl_setopt($ch, CURLOPT_URL, $targetUrl);
+curl_setopt($ch, CURLOPT_URL, $searchApi);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-curl_setopt($ch, CURLOPT_TIMEOUT, 20);
-// 伪装成浏览器
-curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36');
-$response = curl_exec($ch);
+curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/110.0.0.0 Safari/537.36');
+$searchRes = curl_exec($ch);
 curl_close($ch);
 
-// 4. 解析数据
-$data = json_decode($response, true);
+$searchData = json_decode($searchRes, true);
 
-// 5. 【格式严格对齐】
-// 韩小韩返回 success:true 代表成功
-if ($data && isset($data['success']) && $data['success'] == true) {
-    $info = $data['info'];
+// 检查搜索结果
+if ($searchData && is_array($searchData) && !empty($searchData)) {
+    // 默认取第一个匹配结果
+    $song = $searchData[0];
     
-    // 提取字段
-    $song_title = $info['name'] ?? "未知歌曲";
-    $song_singer = $info['auther'] ?? $info['author'] ?? "未知歌手";
-    $song_cover = $info['img'] ?? "";
-    $song_url = $info['mp3url'] ?? $info['url'] ?? "";
+    // 提取基础信息
+    $title  = $song['title']  ?? "未知歌名";
+    $singer = $song['author'] ?? "未知歌手";
+    $pic    = $song['pic']    ?? ""; // 酷狗搜索有时不直接返回封面，后面可能要补
+    $id     = $song['songid'] ?? $song['id']; // 获取歌曲 ID
 
-    // 强转 HTTPS
-    $final_url = str_replace('http://', 'https://', $song_url);
-    $final_cover = str_replace('http://', 'https://', $song_cover);
+    // 第二步：通过 ID 获取详细播放链接
+    $playApi = "https://api.i-meto.com/meting/api?server=kugou&type=url&id=" . $id;
     
-    // 构造最终输出 (完全照搬你V27验证通过的格式)
-    echo json_encode([
-        "code"      => 200,
-        "title"     => (string)$song_title,
-        "singer"    => (string)$song_singer,
-        "cover"     => (string)$final_cover,
-        // 既然 V27 验证了 link 必须有，我们就填进去
-        "link"      => (string)$final_url, 
-        "music_url" => (string)$final_url,
-        "lyric"     => "[00:00.00]此源暂无歌词"
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $playApi);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $playRes = curl_exec($ch);
+    curl_close($ch);
+    
+    $playData = json_decode($playRes, true);
+    
+    // 检查是否有播放链接
+    if ($playData && !empty($playData['url'])) {
+        
+        // 强制 HTTPS
+        $final_url = str_replace('http://', 'https://', $playData['url']);
+        // 如果第一步没拿到封面，酷狗的 pic 往往在第二步里也没有，我们给个默认图或者用之前的
+        $final_cover = !empty($pic) ? str_replace('http://', 'https://', $pic) : "https://y.qq.com/music/photo_new/T002R300x300M0000025NhlN2yWrP4.jpg";
+
+        // === 最终格式封装 (严格适配文档) ===
+        $output = [
+            "code"      => 200,
+            "title"     => (string)$title,
+            "singer"    => (string)$singer,
+            "cover"     => (string)$final_cover,
+            // 补全 link 字段
+            "link"      => (string)$final_url,
+            "music_url" => (string)$final_url,
+            "lyric"     => "[00:00.00]Meting酷狗源"
+        ];
+        
+        send_json($output);
+        
+    } else {
+        // 搜到了ID但拿不到链接 (可能是付费限制)
+        send_json([
+            "code" => 404, 
+            "msg" => "歌曲存在但无法获取播放链接(可能需VIP)", 
+            "title" => "无结果", 
+            "link" => "", 
+            "music_url" => ""
+        ]);
+    }
 
 } else {
-    // 失败处理
-    echo json_encode([
+    // 连搜都搜不到
+    send_json([
         "code" => 404, 
-        "msg" => "未找到歌曲",
-        "title" => "无结果",
-        "singer" => "",
-        "cover" => "",
-        "link" => "",
+        "msg" => "Meting源未找到歌曲", 
+        "title" => "无结果", 
+        "link" => "", 
         "music_url" => ""
-    ], JSON_UNESCAPED_UNICODE);
+    ]);
 }
 ?>
